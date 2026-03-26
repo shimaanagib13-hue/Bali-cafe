@@ -1,37 +1,23 @@
-import { join, resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import path from 'path';
 import fs from 'fs';
 import { createRequire } from 'module';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Standard ESM require for WebAssembly compatibility on Vercel
-const require = createRequire(import.meta.url);
-
-function resolvePath(...segments) {
-    return join(...segments);
-}
-
-// Ensure the database is located relative to the script's bundled location
-const candidateDbPaths = [
-    process.env.DB_PATH,
-    resolve(__dirname, '../server/bali.db'),
-    resolve(__dirname, 'bali.db'),
-    resolve(process.cwd(), 'server', 'bali.db')
-];
-
-const dbPath = candidateDbPaths.find(p => p && fs.existsSync(p)) || resolve(__dirname, '../server/bali.db');
+// Use strictly process.cwd() as requested for Vercel environments
+const dbPath = path.join(process.cwd(), 'server', 'bali.db');
 export const DB_PATH = dbPath;
 
-const candidateSchemaPaths = [
-    resolve(__dirname, '../server/schema.sql'),
-    resolve(__dirname, 'schema.sql'),
-    resolve(process.cwd(), 'server', 'schema.sql')
-];
-const schemaPath = candidateSchemaPaths.find(p => p && fs.existsSync(p)) || resolve(__dirname, '../server/schema.sql');
+const schemaPath = path.join(process.cwd(), 'server', 'schema.sql');
+const seedPath = path.join(process.cwd(), 'server', 'seed.sql');
 
-// Initialize sql.js (WASM-backed JS SQLite) and expose a sqlite3-compatible wrapper
+// Vercel Immutable Environment Detection
+const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL;
+if (isProduction) {
+    process.env.DB_OPEN_MODE = 'READONLY';
+}
+
+// Allow node module requires matching our strict Vercel directory path limits
+const require = createRequire(path.join(process.cwd(), 'server', 'db.js'));
+
 let sqlDb = null;
 export let db = {
     all(_sql, _params, cb) { cb && cb(new Error('DB not initialized')); },
@@ -48,7 +34,7 @@ export async function initDb() {
         
         const SQL = await actualInit({
             locateFile: (file) => {
-                return resolve(process.cwd(), 'sql.js', file);
+                return path.join(process.cwd(), 'server', 'sql.js', file);
             }
         });
 
@@ -76,7 +62,7 @@ export async function initDb() {
         }
 
         function persistIfWritable() {
-            if (process.env.DB_OPEN_MODE === 'READONLY') return;
+            if (process.env.DB_OPEN_MODE === 'READONLY' || isProduction) return;
             try {
                 const data = sqlDb.export();
                 fs.writeFileSync(dbPath, Buffer.from(data));
@@ -132,24 +118,16 @@ export async function initDb() {
             const countRes = sqlDb.exec('SELECT COUNT(*) as count FROM products');
             const rows = rowsFromExecResult(countRes);
             const count = rows[0]?.count || 0;
-            if (count === 0) {
-                const candidateSeedPaths = [
-                    resolvePath(process.cwd(), 'server', 'seed.sql'),
-                    resolvePath(process.cwd(), 'seed.sql'),
-                    resolvePath(process.cwd(), '..', 'server', 'seed.sql')
-                ];
-                const seedPath = candidateSeedPaths.find(p => fs.existsSync(p));
-                if (seedPath) {
-                    console.log('Seeding database from', seedPath);
-                    const seedSql = fs.readFileSync(seedPath, 'utf8');
-                    sqlDb.run(seedSql);
-                    persistIfWritable();
-                    console.log('Database seeded successfully.');
-                } else {
-                    console.warn('Seed file not found (no seeding)');
-                }
-            } else {
+            if (count === 0 && fs.existsSync(seedPath)) {
+                console.log('Seeding database from', seedPath);
+                const seedSql = fs.readFileSync(seedPath, 'utf8');
+                sqlDb.run(seedSql);
+                persistIfWritable();
+                console.log('Database seeded successfully.');
+            } else if (count > 0) {
                 console.log('Database already seeded.');
+            } else {
+                console.warn('Seed file not found (no seeding)');
             }
         } catch (e) {
             console.error('Error checking/seed database:', e.message || e);
@@ -157,7 +135,8 @@ export async function initDb() {
 
         return db;
     } catch (err) {
-        fs.writeFileSync('db_error.txt', err ? (err.stack || err.message || err.toString()) : 'unknown err');
+        // Vercel Immutable File System fix: Removed all fs.writeFileSync attempts
+        // Previously wrote 'db_error.txt' which crashed read-only containers
         console.error('Failed to initialize sql.js-based DB wrapper:', err);
         db = {
             all(_sql, _params, cb) { cb && cb(new Error('DB not available')); },

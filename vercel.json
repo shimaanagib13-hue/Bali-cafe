@@ -4,14 +4,7 @@
     {
       "src": "api/index.js",
       "use": "@vercel/node",
-      "config": {
-        "includeFiles": [
-          "server/bali.db",
-          "server/schema.sql",
-          "server/seed.sql",
-          "node_modules/sql.js/dist/**/*.wasm"
-        ]
-      }
+      "config": { "includeFiles": ["server/bali.db"] }
     },
     {
       "src": "package.json",
@@ -19,13 +12,7 @@
     }
   ],
   "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/index.js"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
+    { "source": "/api/(.*)", "destination": "/api/index.js" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
