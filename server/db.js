@@ -1,7 +1,9 @@
 import { join, resolve } from 'path';
 import fs from 'fs';
 import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+
+// Avoid import.meta.url for esbuild compatibility in Netlify serverless environments
+const require = createRequire(resolve(process.cwd(), 'server', 'db.js'));
 
 function resolvePath(...segments) {
     return join(...segments);

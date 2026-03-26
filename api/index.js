@@ -1,10 +1,9 @@
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
 import serverless from 'serverless-http';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Avoid import.meta.url and fileURLToPath for esbuild compatibility on Netlify
+const __dirnameFallback = path.join(process.cwd(), 'api');
 
 export const handler = async (event, context) => {
   // Resolve DB path
@@ -12,7 +11,7 @@ export const handler = async (event, context) => {
 
   if (!fs.existsSync(resolvedDb)) {
     // DB missing — return helpful directory listings for debugging on Netlify
-    const tryDirs = [__dirname, process.cwd(), path.join(process.cwd(), 'server')];
+    const tryDirs = [__dirnameFallback, process.cwd(), path.join(process.cwd(), 'server')];
     const listings = {};
     for (const d of tryDirs) {
       try {
