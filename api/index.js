@@ -2,88 +2,77 @@ import path from 'path';
 import fs from 'fs';
 import serverless from 'serverless-http';
 
-// Avoid import.meta.url and fileURLToPath for esbuild compatibility on Netlify
-const __dirnameFallback = path.join(process.cwd(), 'api');
+let appInstance = null;
 
-export const handler = async (event, context) => {
-  // Resolve DB path
+// Shared initialization log to prevent starting the DB multiple times
+async function bootstrap() {
   const resolvedDb = path.join(process.cwd(), 'server', 'bali.db');
-
+  
   if (!fs.existsSync(resolvedDb)) {
-    // DB missing — return helpful directory listings for debugging on Netlify
-    const tryDirs = [__dirnameFallback, process.cwd(), path.join(process.cwd(), 'server')];
-    const listings = {};
-    for (const d of tryDirs) {
-      try {
-        listings[d] = fs.readdirSync(d);
-      } catch (e) {
-        listings[d] = `error: ${e.message}`;
-      }
-    }
-
-    console.error('Database file not found. Tried:', { resolvedDb });
-    return {
-      statusCode: 502,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        error: 'Database file not found',
-        tried: { resolvedDb },
-        listings
-      })
-    };
+    console.error('Database file not found at:', resolvedDb);
+    throw new Error(`Database file not found: ${resolvedDb}`);
   }
 
   process.env.DB_PATH = process.env.DB_PATH || resolvedDb;
-  // Request read-only DB open mode for Netlify functions
   process.env.DB_OPEN_MODE = 'READONLY';
-  console.log('api/index.js: using DB at', process.env.DB_PATH);
 
-  // Initialize the JS-based DB wrapper (sql.js) before loading the server
-  try {
+  if (!appInstance) {
     const dbModule = await import('../server/db.js');
     if (dbModule && typeof dbModule.initDb === 'function') {
       await dbModule.initDb();
     }
-  } catch (err) {
-    console.error('DB initialization failed:', err);
-    return {
-      statusCode: 502,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'DB initialization failed', message: err?.message })
-    };
-  }
-
-  // Normalize the incoming path from Netlify:
-  // - Strip "/.netlify/functions/<fnName>" if present
-  // - Also strip a leading "/api" when using redirects that map /api/* -> /.netlify/functions/index/:splat
-  if (event && typeof event.path === 'string') {
-    // Prefer rawPath if available (some runtimes provide both)
-    let p = event.rawPath || event.path || '';
-    // Remove /.netlify/functions/<name> prefix if present
-    const nfPrefix = '/.netlify/functions/';
-    if (p.startsWith(nfPrefix)) {
-      // remove "/.netlify/functions/<name>"
-      const parts = p.slice(nfPrefix.length).split('/');
-      // parts[0] is function name (e.g., "index"), rest is path
-      parts.shift();
-      // Prepend /api so it matches standard Express routes defined in server.js
-      p = '/api/' + parts.join('/');
-    }
-    // Default to /api if entirely empty
-    event.path = p || '/api';
-  }
-
-  try {
     const appModule = await import('../server/server.js');
-    const app = appModule.default || appModule;
+    appInstance = appModule.default || appModule;
+  }
+  return appInstance;
+}
+
+// ============================================
+// VERCEL HANDLER
+// Vercel naturally passes standard Node HTTP (req, res) objects.
+// Express instances natively handle these without needing a wrapper.
+// ============================================
+export default async function vercelHandler(req, res) {
+  try {
+    const app = await bootstrap();
+    
+    // In Vercel, rewrites typically preserve the original req.url (e.g. /api/menu).
+    // Express will match this directly. We don't need complex normalize logic!
+    return app(req, res);
+  } catch (err) {
+    console.error('Vercel API Error:', err);
+    res.status(502).json({ error: 'Server initialization failed', message: err.message });
+  }
+}
+
+// ============================================
+// NETLIFY HANDLER (Kept for fallback/cross-compatibility)
+// Netlify functions use AWS Lambda signature (event, context).
+// ============================================
+export const handler = async (event, context) => {
+  try {
+    const app = await bootstrap();
+
+    // Netlify path normalization
+    if (event && typeof event.path === 'string') {
+      let p = event.rawPath || event.path || '';
+      const nfPrefix = '/.netlify/functions/';
+      if (p.startsWith(nfPrefix)) {
+        const parts = p.slice(nfPrefix.length).split('/');
+        parts.shift();
+        p = '/api/' + parts.join('/');
+      }
+      event.path = p || '/api';
+    }
+
     const lambdaHandler = serverless(app);
     return await lambdaHandler(event, context);
   } catch (err) {
-    console.error('Error initializing server or DB connection:', err);
+    console.error('Netlify API Error:', err);
     return {
       statusCode: 502,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Server initialization failed', message: err?.message })
+      body: JSON.stringify({ error: 'Server initialization failed', message: err.message })
     };
   }
 };
