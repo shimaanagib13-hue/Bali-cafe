@@ -1,0 +1,28 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "api"
+
+[functions]
+  directory = "api"
+  node_bundler = "esbuild"
+  external_node_modules = ["sqlite3"]
+  included_files = ["server/**", "api/**", "node_modules/sql.js/dist/**/*.wasm"]
+ 
+ [[redirects]]
+   from = "/api/*"
+   to = "/.netlify/functions/index/:splat"
+   status = 200
+   force = true
+
+ [[redirects]]
+   from = "/api"
+   to = "/.netlify/functions/index"
+   status = 200
+   force = true
+
+ [[redirects]]
+   from = "/*"
+   to = "/index.html"
+   status = 200
+   force = false
