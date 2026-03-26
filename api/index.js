@@ -1,59 +1,43 @@
-import path from 'path';
-import fs from 'fs';
 import serverless from 'serverless-http';
 
 let appInstance = null;
 
-// Shared initialization log to prevent starting the DB multiple times
 async function bootstrap() {
-  const resolvedDb = path.join(process.cwd(), 'server', 'bali.db');
-  
-  if (!fs.existsSync(resolvedDb)) {
-    console.error('Database file not found at:', resolvedDb);
-    throw new Error(`Database file not found: ${resolvedDb}`);
-  }
-
-  process.env.DB_PATH = process.env.DB_PATH || resolvedDb;
+  // Ensure the database logic doesn't attempt to persist to read-only environments
   process.env.DB_OPEN_MODE = 'READONLY';
 
   if (!appInstance) {
+    // Dynamically import db.js to ensure WASM/SQLite is fully initialized first
     const dbModule = await import('../server/db.js');
     if (dbModule && typeof dbModule.initDb === 'function') {
       await dbModule.initDb();
     }
+    
+    // Only import the application after the database guarantees it's ready
     const appModule = await import('../server/server.js');
     appInstance = appModule.default || appModule;
   }
+  
   return appInstance;
 }
 
-// ============================================
-// VERCEL HANDLER
-// Vercel naturally passes standard Node HTTP (req, res) objects.
-// Express instances natively handle these without needing a wrapper.
-// ============================================
+// VERCEL HANDLER - Natively accepts standard (req, res) provided by Edge networks
 export default async function vercelHandler(req, res) {
   try {
     const app = await bootstrap();
-    
-    // In Vercel, rewrites typically preserve the original req.url (e.g. /api/menu).
-    // Express will match this directly. We don't need complex normalize logic!
     return app(req, res);
   } catch (err) {
-    console.error('Vercel API Error:', err);
+    console.error('Vercel API Initialization Error:', err);
     res.status(502).json({ error: 'Server initialization failed', message: err.message });
   }
 }
 
-// ============================================
-// NETLIFY HANDLER (Kept for fallback/cross-compatibility)
-// Netlify functions use AWS Lambda signature (event, context).
-// ============================================
+// NETLIFY HANDLER - Fallback exported for robust cross-environment compatibility
 export const handler = async (event, context) => {
   try {
     const app = await bootstrap();
 
-    // Netlify path normalization
+    // Standard Netlify path normalization wrapper 
     if (event && typeof event.path === 'string') {
       let p = event.rawPath || event.path || '';
       const nfPrefix = '/.netlify/functions/';
@@ -68,11 +52,11 @@ export const handler = async (event, context) => {
     const lambdaHandler = serverless(app);
     return await lambdaHandler(event, context);
   } catch (err) {
-    console.error('Netlify API Error:', err);
+    console.error('Netlify API Initialization Error:', err);
     return {
       statusCode: 502,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Server initialization failed', message: err.message })
+      body: JSON.stringify({ error: err.message })
     };
   }
 };

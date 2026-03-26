@@ -1,33 +1,35 @@
-import { join, resolve } from 'path';
+import { join, resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { createRequire } from 'module';
 
-// Avoid import.meta.url for esbuild compatibility in Netlify serverless environments
-const require = createRequire(resolve(process.cwd(), 'server', 'db.js'));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Standard ESM require for WebAssembly compatibility on Vercel
+const require = createRequire(import.meta.url);
 
 function resolvePath(...segments) {
     return join(...segments);
 }
 
-// Determine DB paths (allow process.env.DB_PATH override)
-const envDbPath = process.env.DB_PATH;
+// Ensure the database is located relative to the script's bundled location
 const candidateDbPaths = [
-    resolvePath(process.cwd(), 'server', 'bali.db'),
-    resolvePath(process.cwd(), 'bali.db'),
-    resolvePath(process.cwd(), '..', 'server', 'bali.db')
+    process.env.DB_PATH,
+    resolve(__dirname, '../server/bali.db'),
+    resolve(__dirname, 'bali.db'),
+    resolve(process.cwd(), 'server', 'bali.db')
 ];
 
-// Final fallback should be strict resolve as requested
-const dbPath = (envDbPath && fs.existsSync(envDbPath))
-    ? envDbPath
-    : (candidateDbPaths.find(p => fs.existsSync(p)) || resolve(process.cwd(), 'server', 'bali.db'));
+const dbPath = candidateDbPaths.find(p => p && fs.existsSync(p)) || resolve(__dirname, '../server/bali.db');
+export const DB_PATH = dbPath;
 
 const candidateSchemaPaths = [
-    resolvePath(process.cwd(), 'server', 'schema.sql'),
-    resolvePath(process.cwd(), 'schema.sql'),
-    resolvePath(process.cwd(), '..', 'server', 'schema.sql')
+    resolve(__dirname, '../server/schema.sql'),
+    resolve(__dirname, 'schema.sql'),
+    resolve(process.cwd(), 'server', 'schema.sql')
 ];
-const schemaPath = candidateSchemaPaths.find(p => fs.existsSync(p)) || resolvePath(process.cwd(), 'server', 'schema.sql');
+const schemaPath = candidateSchemaPaths.find(p => p && fs.existsSync(p)) || resolve(__dirname, '../server/schema.sql');
 
 // Initialize sql.js (WASM-backed JS SQLite) and expose a sqlite3-compatible wrapper
 let sqlDb = null;
@@ -36,8 +38,6 @@ export let db = {
     get(_sql, _params, cb) { cb && cb(new Error('DB not initialized')); },
     exec(_sql, cb) { cb && cb(new Error('DB not initialized')); }
 };
-
-export const DB_PATH = dbPath;
 
 export async function initDb() {
     if (sqlDb) return db; // already initialized
