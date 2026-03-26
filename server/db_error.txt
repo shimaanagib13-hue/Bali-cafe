@@ -1,0 +1,5 @@
+Error: Error: ENOENT: no such file or directory, open 'C:\Users\Mouha\OneDrive\Desktop\Bali\server\server\sql.js\sql-wasm.wasm'
+    at Module.onAbort (C:\Users\Mouha\OneDrive\Desktop\Bali\server\sql.js\sql-wasm.cjs:40:20)
+    at E (C:\Users\Mouha\OneDrive\Desktop\Bali\server\sql.js\sql-wasm.cjs:101:106)
+    at ab (C:\Users\Mouha\OneDrive\Desktop\Bali\server\sql.js\sql-wasm.cjs:102:149)
+    at C:\Users\Mouha\OneDrive\Desktop\Bali\server\sql.js\sql-wasm.cjs:103:394
