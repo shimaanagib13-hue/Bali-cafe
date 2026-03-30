@@ -4,16 +4,12 @@ let appInstance = null;
 
 async function bootstrap() {
   if (!appInstance) {
-    // Ensure the DB is fully initialized and WASM/SQLite is ready BEFORE 
-    // any routing or Express code is evaluated.
-    const dbModule = await import('../server/db.js');
-    if (dbModule && typeof dbModule.initDb === 'function') {
-      await dbModule.initDb();
+    // Import and initialize the Express application and its components (including DB migrations)
+    const serverModule = await import('../server/server.js');
+    if (serverModule.initApp) {
+        await serverModule.initApp();
     }
-    
-    // Now that DB is ready, import the Express application
-    const appModule = await import('../server/server.js');
-    appInstance = appModule.default || appModule;
+    appInstance = serverModule.default || serverModule;
   }
   
   return appInstance;
