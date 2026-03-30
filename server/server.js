@@ -30,50 +30,79 @@ async function applyMigrations() {
         `, (err) => {
             if (err) console.error('Migration Error (Delete):', err);
             
-            // 2. Ensure all products have images (fallback if runImageUpdate missed any)
-            db.all("SELECT id, name FROM products WHERE image_url IS NULL OR image_url = '' OR image_url = 'NULL' OR image_url = 'Null'", [], (err, rows) => {
+            // 2. Ensure all products have images and correct prefixes
+            db.all("SELECT id, name, image_url FROM products", [], (err, rows) => {
                 if (err || !rows.length) return resolve();
                 
-                let updates = '';
+                let updates = [];
                 rows.forEach(row => {
                     const n = row.name.toLowerCase();
-                    let photoId = '1514432324607'; // Default coffee
-                    if (n.includes('smoothie')) photoId = '1505252585441'; 
-                    else if (n.includes('matcha')) photoId = '1582733315328';
-                    else if (n.includes('boba')) photoId = '1558857563';
-                    else if (n.includes('cake') || n.includes('molten') || n.includes('san sebastian')) photoId = '1533134242443';
-                    else if (n.includes('croissant') || n.includes('patisserie')) photoId = '1555507036-ab1f4038808d';
-                    
-                    updates += `UPDATE products SET image_url = 'https://images.unsplash.com/photo-${photoId}?auto=format&fit=crop&q=80&w=600&h=600' WHERE id = ${row.id};`;
+                    let currentUrl = (row.image_url || '').trim();
+                    let newUrl = currentUrl;
+
+                    // Case A: Missing or Null -> Fallback to Unsplash
+                    if (!currentUrl || currentUrl.toUpperCase() === 'NULL' || currentUrl === '') {
+                        let photoId = '1514432324607'; // Default coffee
+                        if (n.includes('smoothie')) photoId = '1505252585441'; 
+                        else if (n.includes('matcha')) photoId = '1582733315328';
+                        else if (n.includes('boba')) photoId = '1558857563';
+                        else if (n.includes('cake') || n.includes('molten') || n.includes('san sebastian')) photoId = '1533134242443';
+                        else if (n.includes('croissant') || n.includes('patisserie')) photoId = '1555507036-ab1f4038808d';
+                        newUrl = `https://images.unsplash.com/photo-${photoId}?auto=format&fit=crop&q=80&w=600&h=600`;
+                    } 
+                    // Case B: Raw filename (e.g. "Coffee.jpg") -> Prefix with /images/
+                    else if (!currentUrl.startsWith('http') && !currentUrl.startsWith('/') && /\.(jpg|jpeg|png|webp)$/i.test(currentUrl)) {
+                        newUrl = `/images/${encodeURIComponent(currentUrl.replace(/\\/g, '/').split('/').pop())}`;
+                    }
+                    // Case C: Absolute local path (lingering from local work)
+                    else if (currentUrl.includes('\\') || currentUrl.includes(':')) {
+                         const filename = currentUrl.split(/[/\\]/).pop();
+                         newUrl = `/images/${encodeURIComponent(filename)}`;
+                    }
+
+                    if (newUrl !== currentUrl) {
+                        updates.push(`UPDATE products SET image_url = '${newUrl.replace(/'/g, "''")}' WHERE id = ${row.id};`);
+                    }
                 });
                 
-                db.exec(updates, (err) => {
-                    if (err) console.error('Migration Error (Images):', err);
+                if (updates.length > 0) {
+                    db.exec(`BEGIN TRANSACTION; ${updates.join('\n')} COMMIT;`, (err) => {
+                        if (err) console.error('Migration Error (Images):', err);
+                        resolve();
+                    });
+                } else {
                     resolve();
-                });
+                }
             });
         });
     });
 }
 
+export async function initApp() {
+    try {
+        await initDb();
+        await applyMigrations();
+        // Skip runImageUpdate scan on serverless to avoid timeouts/file-system overhead
+        if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+            runImageUpdate().then(() => {
+                console.log('Static image scan complete.');
+            }).catch(err => {
+                console.error('Initial image scan failed:', err);
+            });
+        }
+    } catch (e) {
+        console.error('Failed to initialize app components:', e);
+        throw e;
+    }
+}
+
 function startLocal() {
     if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
-        (async () => {
-            try {
-                await initDb();
-                await applyMigrations();
-                runImageUpdate().then(() => {
-                    console.log('Static image scan complete.');
-                }).catch(err => {
-                    console.error('Initial image scan failed:', err);
-                });
-                app.listen(PORT, () => {
-                    console.log(`Server running on http://localhost:${PORT}`);
-                });
-            } catch (e) {
-                console.error('Failed to initialize DB for local server:', e);
-            }
-        })();
+        initApp().then(() => {
+            app.listen(PORT, () => {
+                console.log(`Server running on http://localhost:${PORT}`);
+            });
+        });
     }
 }
 
